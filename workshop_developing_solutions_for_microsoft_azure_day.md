@@ -581,3 +581,306 @@ foreach (var group in groups?.Value ?? Enumerable.Empty<Microsoft.Graph.Models.G
 ```
 
 The same pattern applies: obtain a token (via MSAL or `ClientSecretCredential`), create a `GraphServiceClient`, then call the appropriate collection (e.g. `Users`, `Groups`, `Me.MailFolders`) and handle the result.
+
+
+# Develop Solutions for Microsoft Azure – Day 4 (05.03)
+
+**Topics:** Implement secure cloud solutions (Azure Key Vault), Implement API Management, Develop event-based solutions (Event Grid, Event Hubs)
+
+---
+
+## Implement secure cloud solutions: Azure Key Vault
+
+### What is Azure Key Vault?
+
+**Azure Key Vault** is a cloud service for **securely storing and accessing secrets**. It centralizes application secrets, keys, and certificates so you avoid storing them in code, config files, or environment variables. Key Vault provides:
+
+- **Hardware Security Module (HSM)–backed storage** for keys (when using Premium tier).
+- **Audit logging** of all access (who accessed what and when).
+- **Access control** via Azure RBAC or Key Vault access policies.
+- **Integration** with Azure services (App Service, Functions, AKS, VMs) and Azure AD.
+
+### What Key Vault stores (three object types)
+
+| Type | Purpose | Typical use |
+|------|---------|-------------|
+| **Secrets** | Arbitrary key–value pairs (e.g. connection strings, API keys, passwords). Stored encrypted; retrieved via REST or SDK. | `SqlConnectionString`, `ApiKey`, `StorageAccountKey` |
+| **Keys** | Cryptographic keys (symmetric or asymmetric). Used for encrypt/decrypt, sign/verify. Can be HSM-backed. | Encryption at rest, JWT signing, key wrap |
+| **Certificates** | X.509 certificates (public + private key). Supports renewal and lifecycle. | TLS/SSL, client auth, code signing |
+
+Secrets have a **max size** (e.g. 25 KB for secret value). For larger data, store a reference (e.g. storage SAS URL) in Key Vault, not the data itself.
+
+### Key benefits (exam-relevant)
+
+- **Monitoring:** All access is logged to Log Analytics or Event Hub. You can detect anomalous access and meet compliance.
+- **Rotation:** You can rotate secrets without redeploying the app (e.g. update the secret in the vault; app reads the new value on next fetch). Optional integration with **Azure App Configuration** and **Event Grid** for secret rotation events.
+- **No secrets in code:** Apps authenticate to Azure AD (e.g. managed identity) and then read secrets from Key Vault at runtime.
+- **Unified access control:** One place to grant/revoke access per app or environment.
+
+### Authentication to Key Vault (three approaches)
+
+To read/write Key Vault, the **caller** (app, script, user) must authenticate. Key Vault uses **Azure AD** for identity. Common approaches:
+
+| Method | Description | When to use |
+|--------|-------------|-------------|
+| **1. Managed identity for Azure resources** | The app runs on an Azure resource (App Service, VM, Function App, AKS). You enable a **system-assigned** or **user-assigned** managed identity and grant that identity access to the vault. No credentials in code. | **Recommended** for apps hosted on Azure. No secrets to manage. |
+| **2. Service principal + certificate** | You register an app in Azure AD and authenticate with a **client ID + certificate** (private key). The certificate is installed on the machine or stored securely. | Automation, CI/CD, or on-premises apps where managed identity is not available. |
+| **3. Service principal + client secret** | Same as above but using a **client secret** instead of a certificate. Simpler but **less secure** (secret can be leaked). | Dev/test only; **not recommended** for production. |
+
+**Best practice:** Prefer **managed identity** for any workload running in Azure (App Service, Functions, VM, AKS). Use **certificate-based** service principal for automation or hybrid scenarios. Avoid client secrets in production.
+
+### Two ways to control access: Access policy vs RBAC
+
+Key Vault supports two **access models** (you choose one per vault; they are mutually exclusive in practice):
+
+**1. Vault access policy (classic)**  
+- You attach **access policies** to the vault. Each policy is a **principal** (user, app, or managed identity) + **permissions** (e.g. Get, List for secrets; Get, List, Create for keys).  
+- Permissions are **Key Vault–specific** (Secrets: Get/List; Keys: Get/List/Create/Sign; Certificates: Get/List/Update).  
+- **Use when:** You want simple, vault-scoped “who can read secrets” rules. Legacy model; still widely used.
+
+**2. Azure RBAC (role-based access control)**  
+- You assign **Azure roles** (e.g. **Key Vault Secrets User**, **Key Vault Crypto User**, **Key Vault Administrator**) to users, groups, or managed identities at the vault (or higher) scope.  
+- Roles are aligned with Azure’s RBAC model and work with PIM, conditionals, and management groups.  
+- **Use when:** You want to standardize on RBAC, use built-in roles (Secrets User, Crypto User, Administrator), or integrate with Azure AD groups and PIM.
+
+**Exam tip:** Know that both exist. “Key Vault Secrets User” allows **read** (Get, List) of secrets; “Key Vault Administrator” allows full access. For an app that only reads secrets, assign **Key Vault Secrets User** to its managed identity.
+
+### Using Key Vault in code: SDK and DefaultAzureCredential
+
+**NuGet packages (typical):**
+
+- **Azure.Security.KeyVault.Secrets** – get/list/create/delete secrets.
+- **Azure.Identity** – authentication (credentials that work with Key Vault).
+
+Other packages: **Azure.Security.KeyVault.Keys**, **Azure.Security.KeyVault.Certificates** for keys and certs.
+
+**DefaultAzureCredential** (from `Azure.Identity`):
+
+- A **credential chain** that tries several authentication methods in order: environment variables → managed identity → Visual Studio / Azure CLI (for local dev) → etc.  
+- **In Azure (e.g. App Service, VM, Function):** When you enable **managed identity**, `DefaultAzureCredential` will use it automatically—no code change when moving from dev to prod.  
+- **Locally:** It uses Azure CLI or Visual Studio login so you don’t need a client secret in dev.  
+- Use it when creating the **SecretClient:**
+
+```csharp
+var vaultUri = new Uri("https://<your-vault-name>.vault.azure.net/");
+var client = new SecretClient(vaultUri, new DefaultAzureCredential());
+KeyVaultSecret secret = await client.GetSecretAsync("MySecretName");
+string value = secret.Value;
+```
+
+**Best practice:** Store the **Key Vault URI** (or vault name) in app settings; never store secrets in app settings. The app uses managed identity + URI to read secrets at runtime.
+
+### Soft-delete and purge
+
+- **Soft-delete** is **always on** for Key Vault (you cannot disable it). When you delete a secret, key, or certificate, it is marked deleted but retained for a **configurable retention period** (default 90 days).  
+- During retention you can **recover** the object. After retention, it can be **purged** (permanent delete).  
+- **Purge protection** (optional): Prevents permanent deletion until the retention period has passed; useful for compliance.  
+- **Exam:** Know that soft-delete is mandatory, and that recovery and purge are part of the lifecycle.
+
+### Best practices (summary)
+
+1. **One vault per app (or per environment):** Isolate dev/prod; limit blast radius.  
+2. **Control access:** Use RBAC or access policies; grant minimum permissions (e.g. Secrets User for read-only).  
+3. **Backup:** For keys and certificates, use Key Vault backup/restore or your own process; secrets can be re-created from app config if needed.  
+4. **Logging:** Enable **diagnostic settings** and send logs to Log Analytics or Storage for audit.  
+5. **Recovery:** Use soft-delete and optionally purge protection; document recovery steps.  
+6. **Network:** Use **private endpoints** or **firewall rules** to restrict access to Key Vault from selected VNets and IPs (exam may mention private link / firewall).
+
+---
+
+## Implement API Management
+
+### Why API Management?
+
+You have backend APIs (your own or third-party) and want to **expose them in a controlled way**: authentication, rate limiting, transformation, logging, and a clear contract for consumers. **Azure API Management (APIM)** is a managed **API gateway** that sits between consumers and your APIs and provides:
+
+- **Gateway:** Single entry point; routing, policies, caching.  
+- **Management plane:** Create and manage APIs, products, subscriptions in Azure Portal or via ARM/APIM REST API.  
+- **Developer portal:** Self-service portal where developers discover APIs, get subscription keys, and try operations.
+
+### Main components (exam-relevant)
+
+| Component | Role |
+|-----------|------|
+| **API gateway** | Receives client requests, applies policies (auth, rate limit, transform), forwards to backend, returns response. Can cache responses. |
+| **Azure portal (management)** | Admin configures APIs, products, groups, policies, analytics. Used by API owners/ops. |
+| **Developer portal** | Developers browse APIs, subscribe to products, get keys, run try-it-now. Can be customized and self-hosted. |
+
+**APIs and operations:**  
+- An **API** in APIM is a logical grouping (e.g. “Orders API”) with a **base URL** and optional **version** (e.g. v1, v2).  
+- Each API contains **operations** (e.g. `GET /orders`, `POST /orders`). Each operation maps to a **backend** HTTP method and URL (and can override the backend URL).  
+- **Products** group one or more APIs. Consumers **subscribe** to a product and get a **subscription key** (or use OAuth/other auth) to call APIs in that product.
+
+### Creating an API Management instance
+
+1. **Portal:** Create a resource → **API Management** → choose **Consumption** or **Developer / Standard / Premium** tier.  
+2. **Pricing tiers:**  
+   - **Consumption:** Serverless; pay per call; no SLA; good for dev/spiky workloads.  
+   - **Developer:** Dev/test; no SLA.  
+   - **Standard / Premium:** Production; SLA; VNet injection, multi-region (Premium).  
+3. **Deployment:** After creation you get a gateway URL (e.g. `https://<name>.azure-api.net`). You then **add APIs** and **operations** and attach **policies**.
+
+### Creating and documenting APIs
+
+- **Add API:** Define name, URL suffix, base URL (optional), possibly version (e.g. “v1”).  
+- **Add operations:** For each endpoint (e.g. `GET /orders`), define display name, URL (path + method), and **backend** (full URL or “use base + path”).  
+- **Documentation:** In the **Developer portal**, you add descriptions, request/response examples, and terms. You can also import **OpenAPI (Swagger)** so the API and operations are created from the spec; APIM can expose the spec and a “try it” experience.  
+- **Revisions and versions:** Use **revisions** for in-place iteration (same URL); use **versions** (e.g. v1, v2) when you want a distinct path or product for backward compatibility.
+
+### Configuring access to the API
+
+- **Subscription keys:** APIM can require a **subscription key** (header `Ocp-Apim-Subscription-Key` or query). Key is tied to a **subscription** (scope: all APIs, or a product). Create subscriptions in the portal; give the key to developers.  
+- **OAuth 2.0 / OpenID Connect:** Configure a **developer console** OAuth2 server or validate **JWT** in policy so that only valid tokens can call the API.  
+- **Client certificates:** Require a client cert for TLS mutual auth; validate in policy.  
+- **IP / VNet:** Restrict caller IP or allow only traffic from a VNet (Premium; use **virtual network integration**).
+
+**Exam:** Know subscription key vs OAuth; know that access can be at **product** level (subscription to product) or **API** level.
+
+### Policies: what they are and where they apply
+
+**Policies** are XML fragments that run at defined **stages** of the request/response pipeline. They execute in order and can **set variables**, **change requests/responses**, **call external services**, or **short-circuit** (e.g. return mock or error).
+
+**Scope (order of application):**  
+Global → Product → API → Operation. More specific scope overrides or adds to broader scope.
+
+**Stages:**
+
+- **Inbound:** After request is received, before forwarding to backend. Use for: validate JWT, check subscription, rate limit, set headers, transform URL.  
+- **Backend:** Before request is sent to backend. Use for: change backend URL, set backend headers.  
+- **Outbound:** After backend response, before sending to client. Use for: remove headers, transform response, cache.  
+- **On-error:** When an error occurs in any stage. Use for: custom error response, logging.
+
+### Important policy examples (exam-style)
+
+| Policy | Scope / stage | Purpose |
+|--------|----------------|---------|
+| **validate-jwt** | Inbound | Validate token (OpenID Connect); reject if invalid. |
+| **check-subscription** | Inbound | Ensure valid subscription key (often automatic when subscriptions are enabled). |
+| **rate-limit** / **quota** | Inbound | Throttle by key or IP; enforce call quota. |
+| **set-backend-service** | Backend | Route to a different backend URL. |
+| **cache-store** / **cache-lookup** | Inbound/Outbound | Cache responses (e.g. cache-lookup inbound; on cache miss, forward; outbound cache-store). |
+| **forward-request** | Inbound | Send request to backend (default if no policy short-circuits). |
+| **return-response** | Inbound/Outbound | Return a fixed response (e.g. mock) without calling backend. |
+| **retry** | Inbound | Retry backend call with condition (e.g. on 5xx). |
+| **log-to-eventhub** | Inbound/Outbound | Send message to Event Hub for analytics or audit. |
+| **limit-concurrency** | Inbound | Cap concurrent requests to backend to avoid overload. |
+
+**Base policy:** Every scope has a base policy (e.g. `<inbound><base/><forward-request/></inbound>`). `<base/>` includes the policy from the parent scope.
+
+### Caching
+
+- **Response caching:** Use **cache-lookup** (inbound) and **cache-store** (outbound) with a cache duration and key (e.g. by subscription + URL). APIM has an **internal cache** (per gateway node) or you can use **external Redis** (Standard/Premium) for distributed cache.  
+- **Vary by:** Cache key can include headers (e.g. `Accept-Language`) so different responses are cached per key.
+
+---
+
+## Develop event-based solutions
+
+Azure provides two main event-driven services that appear on AZ-204: **Event Grid** (event routing and reaction) and **Event Hubs** (high-throughput event ingestion and streaming). They are used for different scenarios.
+
+---
+
+### Azure Event Grid
+
+**What it is:**  
+Event Grid is a **serverless event routing service**. It connects **event sources** (publishers) to **event handlers** (subscribers) via **topics** and **subscriptions**. Events are **delivered** (push) to handlers; Event Grid does not store events for long-term replay (unlike Event Hubs).
+
+Example: Blob uploaded → Event Grid → Azure Function runs
+
+**Concepts (exam-relevant):**
+
+| Concept | Description |
+|---------|-------------|
+| **Event** | A small JSON message describing “something that happened” (past tense). Contains: id, subject, data, eventType, eventTime, dataVersion. Schema can be **Event Grid schema** or **Cloud Events 1.0**. |
+| **Publisher / event source** | Service or app that **sends** events (e.g. Storage Account, Resource Group, Custom Topic, IoT Hub, Media Services). |
+| **Topic** | Endpoint where publishers send events. **System topics** (e.g. for Blob created, Resource Group) are built-in; **custom topics** are user-created for app events. |
+| **Event subscription** | Binding from a topic to a **handler** (webhook, Function, Queue, Event Hubs, etc.). You define filters (event type, subject prefix) and optional **dead-letter** and **retry** settings. |
+| **Handler** | Destination that receives events: Azure Function, Webhook (HTTP), Storage Queue, Service Bus Queue/Topic, Event Hubs, Hybrid Connection, etc. |
+
+**How it works:**  
+1. A source (e.g. Blob Storage) emits an event when something happens (e.g. blob created).  
+2. The event is sent to a **topic** (system topic for Blob, or a custom topic).  
+3. **Event Grid** matches the event to **subscriptions** (filters) and **delivers** to each subscriber’s endpoint (POST with event payload).  
+4. Handler returns 200 OK; otherwise Event Grid **retries** (exponential backoff). After max retries, event can be sent to **dead-letter** (Storage) if configured.
+
+**Delivery and retries:**  
+- **Retry policy:** Configurable (e.g. max delivery attempts, time-to-live). Events are retried on failure (e.g. 5xx, timeout).  
+- **Dead-letter:** If delivery fails after all retries, the event can be stored in a Storage container for later inspection.  
+- **Idempotency:** Handlers should be idempotent (same event may be delivered more than once in edge cases).
+
+**Use cases (exam):**  
+- React to Azure resource events (VM created, Blob uploaded, Resource deleted).  
+- Custom app events (order placed, user registered) via **custom topic**.  
+- Decouple publishers and subscribers (many subscribers to one topic).  
+- Trigger serverless (Function, Logic App) from events.
+
+**Pricing model:** Pay per **operations** (event published, delivery attempt, etc.); no fixed cost for “idle” topics.
+
+---
+
+### Azure Event Hubs
+
+**What it is:**  
+Event Hubs is a **managed event streaming** and **ingestion** service. It is designed for **high throughput** and **retention**: producers send events to a **namespace** and **event hub**; consumers read from **partitions** in a **consumer group**. Events are stored for a **retention period** (e.g. 1–7 days) so multiple consumers can read the same stream.
+
+Example: 10,000 IoT devices → Event Hub → Stream Analytics → Data Lake
+
+**Concepts (exam-relevant):**
+
+| Concept | Description |
+|---------|-------------|
+| **Namespace** | Container for one or more event hubs; has a FQDN and shared networking/throughput settings. |
+| **Event hub** | Named stream of events. Has **partitions** (ordered sequence per partition). |
+| **Partition** | Ordered event stream. Producers can send with **partition key** (same key → same partition) or let the service assign. **Partition count** is set at creation (cannot change later for standard tier). |
+| **Consumer group** | View of the full event hub. Each consumer group has its own offset per partition so multiple apps can read the same stream independently. Default: `$Default`. |
+| **Throughput units (TU)** / **Processing units (PU)** | Standard tier: **throughput units** (ingress + egress). Premium: **processing units**. Auto-inflate can scale TUs. |
+| **Capture** | Optional: automatically send event hub data to **Blob Storage** or **Data Lake** in Avro format for batch/analytics. |
+
+**Producers:** Send events via **AMQP** or **HTTPS** (REST). Can use **partition key** for ordering or **partition id** for direct send. **Event Hubs SDK** (e.g. .NET) handles batching and connection management.
+
+**Consumers:** Read via **Event Processor Client** (recommended) or **consumer client** per partition. Event Processor uses **checkpointing** (store offset in Blob) so processing can resume and scale across instances.
+
+**Event Grid vs Event Hubs (exam):**
+
+| Aspect | Event Grid | Event Hubs |
+|--------|------------|------------|
+| **Purpose** | Route events to handlers (push); react to events. | Ingest and stream events; store for retention; pull/process. |
+| **Retention** | No retention (deliver and done). | Configurable retention (e.g. 1–7 days). |
+| **Throughput** | High but tuned for routing. | Very high (millions events/sec) with partitions. |
+| **Consumers** | Each subscription gets a copy (push). | Multiple consumer groups read same stream (pull). |
+| **Typical use** | React to Blob upload, resource changes, custom app events. | Telemetry, logs, stream processing (e.g. with Stream Analytics, Spark). |
+
+**Use cases for Event Hubs:**  
+- Telemetry and logging from devices or apps.  
+- Stream processing (e.g. Azure Stream Analytics, Spark).  
+- **Capture** to Data Lake or Blob for batch analytics.  
+- Building a **event-sourced** or replayable pipeline.
+
+**Security:**  
+- **Shared Access Signature (SAS)** or **Azure AD** (recommended) for auth.  
+- **Private endpoints** and **firewall rules** for network isolation (Premium).
+
+
+There is also Azure Service Bus - message broker. Similar to RabbitMQ. Supports: queues, topics, subscriptions, dead-letter queues, transactions, message-ordering. 
+
+Example flow: Order Service → Service Bus Queue → Payment Service
+
+| Feature           | Event Grid      | Service Bus            | Event Hubs            |
+| ----------------- | --------------- | ---------------------- | --------------------- |
+| Purpose           | Event routing   | Reliable messaging     | Event streaming       |
+| Message volume    | Low–medium      | Medium                 | Extremely high        |
+| Persistence       | Short           | Long                   | Stream retention      |
+| Ordering          | No              | Yes                    | Partition-based       |
+| Complex workflows | No              | Yes                    | No                    |
+| Typical use       | React to events | Microservice messaging | Telemetry / analytics |
+
+
+---
+
+## Quick reference for AZ-204
+
+- **Key Vault:** Secrets/keys/certificates; auth via managed identity (preferred) or service principal; access via RBAC or access policy; use `DefaultAzureCredential` + SecretClient; soft-delete always on.  
+- **API Management:** Gateway + management + developer portal; APIs → operations → backend; products and subscriptions for access; policies (inbound/backend/outbound/on-error) for auth, rate limit, cache, retry, mock, log to Event Hub.  
+- **Event Grid:** Event routing; topics and subscriptions; push to handlers; retry and dead-letter; system and custom topics.  
+- **Event Hubs:** High-throughput ingestion; partitions and consumer groups; retention; capture to Storage; use for streaming and replay, not just one-off delivery.
+
