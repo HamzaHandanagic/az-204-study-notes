@@ -891,6 +891,104 @@ Example flow: Order Service → Service Bus Queue → Payment Service
 
 ---
 
+## Overview: How the pieces fit together
+
+- **Azure Monitor** is the central **platform** for monitoring and diagnostics in Azure. It collects and stores metrics, logs, and traces from Azure resources, the OS, and applications. You use it to query data, set alerts, and create dashboards.
+- **Application Insights** (often called “Microsoft Application Insights” or “App Insights”) is an **application-level** service built on Azure Monitor. It focuses on observability for your apps: performance, failures, usage, and dependencies. Its data (logs, metrics, traces) is stored in a Log Analytics workspace, which is part of Azure Monitor.
+
+So: **Application Insights = application monitoring**. **Azure Monitor = the overall monitoring and logging platform**. As a developer, you typically enable Application Insights for your app and then use Azure Monitor (and Log Analytics) to query and alert on that data.
+
+---
+
+## Azure Monitor
+
+### What it is
+
+Azure Monitor is the default monitoring and diagnostics solution for Azure. It provides:
+
+- **Metrics** — Numeric time-series data (e.g. CPU %, request count, custom metrics). Stored for 93 days by default; some can be retained longer.
+- **Logs** — Event and trace data stored in Log Analytics workspaces, queryable with **KQL (Kusto Query Language)**. Retention is configurable (days to years).
+- **Traces and dependencies** — When used with Application Insights, these are stored as log data and can be queried in the same workspace.
+
+### Key concepts for developers
+
+| Concept | Description |
+|--------|-------------|
+| **Log Analytics workspace** | Central store for log data. Application Insights can send its data here. You run KQL queries against tables in the workspace. |
+| **Metrics (platform)** | Built-in metrics from Azure resources (e.g. App Service request count, CPU, memory). Available in the Metrics blade and for alerts. |
+| **Alerts** | Rules that fire when a condition is met (e.g. error rate &gt; 5%, latency &gt; 2 s). They use **action groups** to send notifications (email, webhook, Logic App, etc.). |
+| **Workbooks** | Custom dashboards that combine queries, metrics, and parameters. Useful for sharing views with the team. |
+
+### What you should know as a developer
+
+- How to **create a Log Analytics workspace** and link it to your app or to Application Insights.
+- How to **write KQL queries** for common tables (e.g. `requests`, `exceptions`, `dependencies`, `traces`) when Application Insights is connected to that workspace.
+- How to **create metric and log alerts** and attach **action groups** (e.g. email or webhook for on-call).
+- That **metrics** are good for dashboards and threshold alerts; **logs** are for detailed analysis and correlation (e.g. “all requests that led to this exception”).
+
+---
+
+## Application Insights
+
+### What it is
+
+Application Insights is an **Application Performance Management (APM)** and observability service. It helps you understand how your application behaves in production: performance, failures, and usage. It is the main tool you use as a developer to monitor your own code.
+
+### What it collects (out of the box)
+
+- **Requests** — Incoming HTTP requests (URL, duration, success/failure, response code).
+- **Dependencies** — Outgoing calls (HTTP, SQL, Azure SDK, etc.) with duration and success/failure.
+- **Exceptions** — Unhandled (and optionally handled) exceptions with stack traces.
+- **Traces** — Custom log messages and diagnostic output (e.g. from `ILogger` or `TrackTrace`).
+- **Performance counters** — CPU, memory, and other host metrics when running in a supported environment (e.g. App Service, VM).
+- **Custom events and metrics** — You can send custom events (e.g. “user completed checkout”) and numeric metrics (e.g. “cart value”) via the SDK.
+
+### Instrumentation: how to add it to your app
+
+1. **Connection string or instrumentation key**  
+   When you create an Application Insights resource, you get an **instrumentation key** (legacy) or a **connection string** (preferred). You put this in config (e.g. `APPLICATIONINSIGHTS_CONNECTION_STRING` in App Service) or in code. The SDK sends all telemetry to this resource.
+
+2. **Auto-instrumentation (no code)**  
+   For **Azure App Service**, **Azure Functions**, and some other hosts, you can enable Application Insights in the portal (or via ARM/Bicep). The platform injects agents that collect HTTP requests, dependencies, and exceptions without changing your code. You still get the most value by adding the SDK for custom traces, events, and metrics.
+
+3. **SDK in code**  
+   - **ASP.NET Core:** Add the `Microsoft.ApplicationInsights.AspNetCore` package and call `AddApplicationInsightsTelemetry()` (and optionally `AddApplicationInsightsWorkerService()` for background workers).  
+   - Use **ILogger**; logs are sent to Application Insights as traces when the provider is configured.  
+   - For custom telemetry: `TelemetryClient.TrackEvent()`, `TrackMetric()`, `TrackTrace()`, `TrackException()`.  
+   - **Sampling:** In high-throughput scenarios, enable sampling (e.g. `ApplicationInsightsServiceOptions.EnableAdaptiveSampling`) so you don’t exceed ingestion limits or cost; sampling keeps a representative subset of requests and correlated telemetry.
+
+### Where the data lives
+
+- By default, Application Insights stores data in its own store (quick access in the App Insights blade).
+- For **workspace-based** Application Insights, data is stored in a **Log Analytics workspace**. The same data is then queryable via **Logs** in Azure Monitor using KQL. This is the recommended approach for correlating app telemetry with other logs and for long retention.
+
+### Key features for developers
+
+- **Performance / Application map** — See which operations and dependencies are slow or failing.
+- **Failures** — Filter by exception type, see stack traces and related requests.
+- **Live Metrics** — Stream of key metrics and traces in near real time (useful during debugging or releases).
+- **Logs (Analytics)** — Run KQL over `requests`, `exceptions`, `dependencies`, `traces`, `customEvents`, `customMetrics`. Example: “Show all exceptions in the last hour with their request IDs.”
+- **Availability tests** — Ping a URL from Azure at intervals and alert if the app is down or slow (synthetic monitoring).
+
+### Things to watch out for
+
+- **Privacy and PII** — Avoid logging sensitive or personal data in traces and custom properties. Use configuration to redact or disable in dev.
+- **Cost** — Data ingestion and retention have cost. Use sampling, limit custom events in hot paths, and set retention and sampling rules appropriately.
+- **Connection string vs instrumentation key** — Prefer **connection string** for new apps; it supports sovereign clouds and is the path forward.
+
+---
+
+## Using Azure Monitor and Application Insights together
+
+- **Enable Application Insights** on your App Service, Function App, or add the SDK to your app. Data flows into Application Insights (and optionally into a Log Analytics workspace).
+- **Query in Azure Monitor → Logs** using the workspace (or the Application Insights “Logs” experience, which uses the same KQL). Typical tables: `requests`, `exceptions`, `dependencies`, `traces`, `customEvents`, `customMetrics`.
+- **Create alerts** in Azure Monitor on log queries (e.g. “when exception count &gt; 10 in 5 minutes”) or on metrics (e.g. “when average request duration &gt; 3 s”). Use **action groups** to notify the team.
+- **Dashboards** — Pin key metrics and workbooks to an Azure dashboard for a single view of health and performance.
+
+This combination gives you full-stack observability: your application telemetry in Application Insights, and the broader Azure Monitor platform for querying, alerting, and operations.
+
+---
+
 # Azure Certification Exam Prep
 
 ## Certifications Overview
