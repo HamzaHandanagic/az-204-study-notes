@@ -884,3 +884,76 @@ Example flow: Order Service → Service Bus Queue → Payment Service
 - **Event Grid:** Event routing; topics and subscriptions; push to handlers; retry and dead-letter; system and custom topics.  
 - **Event Hubs:** High-throughput ingestion; partitions and consumer groups; retention; capture to Storage; use for streaming and replay, not just one-off delivery.
 
+
+# Develop Solutions for Microsoft Azure – Day 5 (06.03.)
+
+**Topics:** Microsoft Insight, Azure Monitor
+
+---
+
+# Azure Certification Exam Prep
+
+## Certifications Overview
+
+| Exam   | Notes |
+|--------|--------|
+| **AZ-900** | Good practice and starting point (Azure Fundamentals). |
+| **AZ-204** | Azure Developer Associate. Being discontinued; **AI-200** is the replacement. Certificate validity: 1 year. |
+| **AZ-305** | Azure Solutions Architect. Take this next; prerequisite is **AZ-104** (Azure Administrator). |
+
+---
+
+## Exam Tips
+
+- **Number of questions:** 40–60.
+- **Order:** Questions appear in sequence.
+- **Case studies:** You get a business or technical scenario, then multiple questions. **Read the question first, then the case study.**
+- **Scoring:** No negative marks — attempt every question.
+- **Navigation:** You can flag and bookmark questions and review them at the end.
+- **Multiple choice:** In AZ-204 the wording is explicit. Look for “Select one answer” vs “Select all that apply.”
+- **Weight:** Different questions have different point values.
+- **Content:** Not many syntax-check questions; focus on concepts and scenarios.
+
+Practice: Work with Azure CLI: creating App Services, scaling App Service plans, creating Key Vault, adding secrets/certs/keys, and fetching them programmatically. **CLI is emphasized more than PowerShell** in the exam.
+
+---
+
+## Study Plan
+
+1. **Study guide** — Microsoft Learn AZ-204 (and the official certification study guide for your exam).
+2. **Fill gaps** — If you’re not familiar with a topic, drill it.
+3. **Official course** — [AZ-204: Develop solutions for Microsoft Azure](https://learn.microsoft.com/en-us/training/courses/az-204t00).
+4. **Make notes** — Summarize objectives and weak areas.
+5. **Practice test** — Microsoft official practice test for your exam.
+6. **AI practice** — Use the prompt below to simulate exam-style Q&A.
+7. **Labs** — Do the hands-on labs.
+8. **External practice** — e.g. SkillCertPro, [exam.getmicrosoftcertification.com](https://exam.getmicrosoftcertification.com/).
+
+---
+
+## AI Practice Prompt (AZ-204 style)
+
+Copy and paste this (or adapt for another exam) into your AI assistant to get exam-style questions and feedback:
+
+```
+You are an expert in the AZ-204 Certification exam and a certified trainer who has contributed to the exam question library.
+
+I am preparing for this certification and need your help to evaluate my skills and guide me to pass with more than 950 out of 1000.
+
+Reference material:
+- Study guide (objectives): https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/az-204
+- MS Learn course: https://learn.microsoft.com/en-us/training/courses/az-204t00
+
+I want you to:
+1. Create one question at a time, matching the pattern and complexity of the real AZ-204 exam. You may use past questions from dumps as reference.
+2. After I give my answer, evaluate it and tell me if it’s correct or incorrect, with explanations for all choices.
+3. Only then generate the next question.
+4. For now, limit questions to this learning path: https://learn.microsoft.com/en-us/training/paths/create-azure-app-service-web-apps/
+5. If my answer is wrong, provide the required content or a reference URL so I can learn the topic.
+
+Before we start: list the context and topics you see in the learning path link above, and wait for my approval before asking the first question.
+```
+
+---
+
+
